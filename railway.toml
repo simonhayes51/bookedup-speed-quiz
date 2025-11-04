@@ -1,0 +1,13 @@
+[service]
+name = "bookedup-speed-quiz"
+startCommand = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+
+[variables]
+SECRET_KEY = "change-me"      # set a strong value in Railway
+# Optional if using a Volume:
+# DATA_DIR = "/data"
+# Option A (remove after first successful login):
+# ADMIN_EMAIL = "you@domain.com"
+# ADMIN_PASSWORD = "SuperSecure123!"
+# Option B (remove after bootstrapping):
+# BOOTSTRAP_TOKEN = "generate-a-strong-token"
