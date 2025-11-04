@@ -1,0 +1,14 @@
+{% extends "layout.html" %}{% block content %}
+<h3>Venues</h3>
+<form method='post' action='/admin/venues/add' class='grid'>
+  <input name='name' placeholder='Venue Name' required><input name='logo_url' placeholder='Logo URL (optional)'>
+  <div><button class='btn' type='submit'>Add Venue</button></div>
+</form><hr>
+<h4>Assign Host → Venue</h4>
+<form method='post' action='/admin/venues/assign' class='grid'>
+  <input name='host_id' type='number' placeholder='Host ID' required>
+  <input name='venue_id' type='number' placeholder='Venue ID' required>
+  <div><button class='btn' type='submit'>Assign</button></div>
+</form><hr>
+<ul class='list'>{% for v in venues %}<li><span>{{ v.name }}</span><span>ID {{ v.id }}</span></li>{% endfor %}</ul>
+{% endblock %}

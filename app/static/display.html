@@ -1,0 +1,30 @@
+<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
+<link rel='stylesheet' href='/static/style.css'><title>Projector</title>
+<div class='wrap'>
+  <h2>Projector</h2>
+  <div class='card'><input id='room' placeholder='Room code'><button class='btn' onclick='connect()'>Connect</button></div>
+  <div class='card'><div id='qText'></div><img id='qImage' style='max-width:100%;display:none'></div>
+  <div class='grid'>
+    <div class='card'><div class='progress'><div class='bar' id='a' style='width:0%'></div></div><div class='small'>A</div></div>
+    <div class='card'><div class='progress'><div class='bar' id='b' style='width:0%'></div></div><div class='small'>B</div></div>
+    <div class='card'><div class='progress'><div class='bar' id='c' style='width:0%'></div></div><div class='small'>C</div></div>
+    <div class='card'><div class='progress'><div class='bar' id='d' style='width:0%'></div></div><div class='small'>D</div></div>
+  </div>
+  <div class='card'><h3>Leaderboard</h3><ul class='list' id='board'></ul></div>
+</div>
+<script>
+let ws=null, roomId=null;
+function connect(){
+  roomId=document.getElementById('room').value.trim().toUpperCase();
+  ws=new WebSocket(getWs()); ws.onopen=()=>{ws.send(JSON.stringify({role:'display', roomId}))};
+  ws.onmessage=(ev)=>{const m=JSON.parse(ev.data);
+    if(m.type==='question:prompt'){qText.innerText=m.text; if(m.imageUrl){qImage.src=m.imageUrl;qImage.style.display='block';} else qImage.style.display='none'; setBars(0,0,0,0);}
+    if(m.type==='answers:progress'){const t=Math.max(1,m.teamsTotal); setBars(m.counts[0]/t*100,m.counts[1]/t*100,m.counts[2]/t*100,m.counts[3]/t*100);}
+    if(m.type==='results:summary'){renderBoard(m.leaderboard);}
+  };
+}
+function getWs(){const l=location; return (l.protocol==='https:'?'wss':'ws')+'://'+l.host+'/ws';}
+function setBars(a,b,c,d){document.getElementById('a').style.width=a+'%';document.getElementById('b').style.width=b+'%';document.getElementById('c').style.width=c+'%';document.getElementById('d').style.width=d+'%';}
+function renderBoard(ls){const ul=document.getElementById('board'); ul.innerHTML=''; ls.forEach((t,i)=>{const li=document.createElement('li'); li.innerHTML='<span>'+(i+1)+'. '+t.name+'</span><span>'+t.score+'</span>'; ul.appendChild(li);});}
+const qText=document.getElementById('qText'), qImage=document.getElementById('qImage');
+</script>

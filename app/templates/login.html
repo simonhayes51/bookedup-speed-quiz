@@ -1,0 +1,10 @@
+{% extends "layout.html" %}{% block content %}
+<h3>Login</h3>
+{% if error %}<div class='badge'>{{ error }}</div>{% endif %}
+<form method='post' action='/admin/login' class='grid'>
+  <input type='hidden' name='next' value='{{ next }}'>
+  <input name='email' type='email' placeholder='email@example.com' required>
+  <input name='password' type='password' placeholder='password' required>
+  <div><button class='btn' type='submit'>Sign in</button></div>
+</form>
+{% endblock %}

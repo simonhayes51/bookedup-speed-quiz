@@ -1,0 +1,67 @@
+<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
+<link rel='stylesheet' href='/static/style.css'><title>Host</title>
+<div class='wrap'>
+  <h2>Host</h2>
+  <div class='card'>
+    <div class='grid'>
+      <label>Venue (assigned)</label><select id='venueSelect'></select>
+      <label>Quiz</label><select id='quizSelect'></select>
+      <label>Time (seconds)</label><input id='timeInput' value='20' type='number' min='5'>
+      <button class='btn' onclick='startQuestion()'>Start ▶</button>
+    </div>
+  </div>
+  <div class='card flex' style='justify-content:space-between'>
+    <div>Room: <span class='badge' id='roomCode'>—</span></div>
+    <div class='flex'><button class='btn' onclick='lockQuestion()'>Lock</button><button class='btn' onclick='reveal()'>Reveal</button><a class='btn' id='exportLink' target='_blank'>Export CSV</a></div>
+  </div>
+  <div class='grid'>
+    <div class='card'>
+      <h3>Question</h3>
+      <div id='qText'></div>
+      <img id='qImage' style='max-width:100%;display:none'>
+      <div class='progress'><div class='bar' id='barA' style='width:0%'></div></div>
+      <div class='progress'><div class='bar' id='barB' style='width:0%'></div></div>
+      <div class='progress'><div class='bar' id='barC' style='width:0%'></div></div>
+      <div class='progress'><div class='bar' id='barD' style='width:0%'></div></div>
+      <div class='small'><span id='answeredCount'>0</span> answered</div>
+    </div>
+    <div class='card'>
+      <h3>Teams</h3>
+      <ul class='list' id='teamsList'></ul>
+    </div>
+    <div class='card'>
+      <h3>Leaderboard</h3>
+      <ul class='list' id='leaderboard'></ul>
+    </div>
+  </div>
+</div>
+<script>
+let ws=null, roomId=null;
+async function init(){
+  const me = await (await fetch('/api/me')).json(); if(!me||!me.id){location.href='/admin/login?next=/host';return;}
+  const vres=await fetch('/api/my_venues'); const venues=await vres.json();
+  const vsel=document.getElementById('venueSelect'); venues.forEach(v=>{const o=document.createElement('option'); o.value=v.id; o.textContent=v.name; vsel.appendChild(o);});
+  const qres=await fetch('/api/quizzes'); const quizzes=await qres.json();
+  const qsel=document.getElementById('quizSelect'); quizzes.forEach(q=>{const o=document.createElement('option'); o.value=q.id; o.textContent=q.title; qsel.appendChild(o);});
+  // create room
+  const fd=new FormData(); fd.append('venue_id', vsel.value||venues[0].id); fd.append('venue_title', venues[0].name); fd.append('venue_logo', venues[0].logo_url||'');
+  const cres=await fetch('/api/create_room', {method:'POST', body:fd}); const cd=await cres.json(); roomId=cd.roomId;
+  document.getElementById('roomCode').innerText=roomId; document.getElementById('exportLink').href='/api/export/'+roomId;
+  ws = new WebSocket(getWs()); ws.onopen=()=>{ws.send(JSON.stringify({role:'host', roomId})); setQuiz();};
+  ws.onmessage=(ev)=>{const m=JSON.parse(ev.data);
+    if(m.type==='teams:update') renderTeams(m.teams);
+    if(m.type==='question:prompt'){document.getElementById('qText').innerText=m.text; if(m.imageUrl){qImage.src=m.imageUrl;qImage.style.display='block';}else qImage.style.display='none'; setBars(0,0,0,0); document.getElementById('answeredCount').innerText='0';}
+    if(m.type==='answers:progress'){const tot=Math.max(1,m.teamsTotal); setBars(m.counts[0]/tot*100,m.counts[1]/tot*100,m.counts[2]/tot*100,m.counts[3]/tot*100); document.getElementById('answeredCount').innerText=m.answered;}
+    if(m.type==='results:summary'){renderBoard(m.leaderboard);}
+  };
+}
+function getWs(){const l=location;return (l.protocol==='https:'?'wss':'ws')+'://'+l.host+'/ws';}
+function setQuiz(){const quizId=document.getElementById('quizSelect').value; ws.send(JSON.stringify({type:'host:set_quiz', quizId}));}
+function startQuestion(){const s=parseInt(document.getElementById('timeInput').value||'20',10); ws.send(JSON.stringify({type:'host:start_question', timeLimitMs:s*1000}));}
+function lockQuestion(){ws.send(JSON.stringify({type:'host:lock'}));}
+function reveal(){ws.send(JSON.stringify({type:'host:reveal'}));}
+function renderTeams(ts){const ul=document.getElementById('teamsList'); ul.innerHTML=''; ts.forEach(t=>{const li=document.createElement('li'); li.innerHTML='<span>'+t.name+'</span><span>'+t.score+'</span>'; ul.appendChild(li);});}
+function renderBoard(ls){const ul=document.getElementById('leaderboard'); ul.innerHTML=''; ls.forEach((t,i)=>{const li=document.createElement('li'); li.innerHTML='<span>'+(i+1)+'. '+t.name+'</span><span>'+t.score+'</span>'; ul.appendChild(li);});}
+function setBars(a,b,c,d){document.getElementById('barA').style.width=a+'%';document.getElementById('barB').style.width=b+'%';document.getElementById('barC').style.width=c+'%';document.getElementById('barD').style.width=d+'%';}
+window.addEventListener('load', init);
+</script>

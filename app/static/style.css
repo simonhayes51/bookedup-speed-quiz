@@ -1,0 +1,18 @@
+
+body{font-family:Arial,Helvetica,sans-serif;margin:0;background:#111;color:#eee}
+a{color:#4ea3ff} h1,h2,h3{margin:8px 0} .wrap{max-width:980px;margin:0 auto;padding:16px}
+.card{background:#1b1b1b;border:1px solid #2a2a2a;border-radius:6px;padding:12px;margin:12px 0}
+input,select,textarea,button{font-size:16px}
+input,select,textarea{width:100%;padding:8px;border:1px solid #333;background:#0f0f0f;color:#eee;border-radius:4px}
+button,.btn{background:#2f6fed;color:#fff;border:none;padding:8px 12px;border-radius:4px;cursor:pointer;text-decoration:none;display:inline-block}
+.btn.secondary{background:#2a2a2a}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.flex{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.badge{background:#0f0f0f;border:1px solid #333;border-radius:999px;padding:4px 8px;color:#bbb}
+.list{list-style:none;padding:0;margin:0}
+.list li{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px dashed #2a2a2a}
+.optbtn{padding:16px;text-align:center;border:1px solid #333;background:#0f0f0f;border-radius:6px;cursor:pointer}
+.progress{height:8px;background:#0f0f0f;border:1px solid #333;border-radius:999px;overflow:hidden}
+.bar{height:100%;background:#3aa0ff}
+.logo{height:42px}
+.small{font-size:12px;color:#aaa}

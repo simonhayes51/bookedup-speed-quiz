@@ -1,0 +1,9 @@
+{% extends "layout.html" %}{% block content %}
+<div class='flex' style='justify-content:space-between;align-items:center'>
+  <h3>Quizzes</h3>
+  <a class='btn' href='/admin/quizzes/new'>New Quiz</a>
+</div>
+<ul class='list'>{% for q in quizzes %}
+  <li><span>{{ q.title }}</span><span><a class='btn' href='/admin/quizzes/{{ q.id }}/edit'>Edit</a></span></li>
+{% endfor %}</ul>
+{% endblock %}

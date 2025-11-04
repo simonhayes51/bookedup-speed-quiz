@@ -1,0 +1,39 @@
+<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
+<link rel='stylesheet' href='/static/style.css'><title>Team</title>
+<div class='wrap'>
+  <h2>Team</h2>
+  <div class='card' id='join'>
+    <input id='room' placeholder='Room code'>
+    <input id='name' placeholder='Team name'>
+    <button class='btn' onclick='join()'>Join</button>
+  </div>
+  <div class='card' id='play' style='display:none'>
+    <div id='qText'></div>
+    <img id='qImage' style='max-width:100%;display:none'>
+    <div class='grid'>
+      <div class='optbtn' onclick='pick(0)'>A</div>
+      <div class='optbtn' onclick='pick(1)'>B</div>
+      <div class='optbtn' onclick='pick(2)'>C</div>
+      <div class='optbtn' onclick='pick(3)'>D</div>
+    </div>
+    <div class='badge' id='status'></div>
+  </div>
+</div>
+<script>
+let ws=null, roomId=null, answered=false;
+function join(){
+  roomId=document.getElementById('room').value.trim().toUpperCase();
+  const team=document.getElementById('name').value.trim();
+  ws=new WebSocket(getWs()); ws.onopen=()=>{ws.send(JSON.stringify({role:'team', roomId, teamName:team}));};
+  ws.onmessage=(ev)=>{const m=JSON.parse(ev.data);
+    if(m.type==='team:joined'){joinEl.style.display='none'; playEl.style.display='block';}
+    if(m.type==='question:prompt'){answered=false; qText.innerText=m.text; if(m.imageUrl){qImage.src=m.imageUrl;qImage.style.display='block';} else qImage.style.display='none'; status.innerText='Answer!';}
+    if(m.type==='question:locked'){status.innerText='Locked';}
+    if(m.type==='answer:accepted'){status.innerText='Answer locked ✔';}
+    if(m.type==='results:summary'){status.innerText='See screen for results';}
+  };
+}
+function getWs(){const l=location; return (l.protocol==='https:'?'wss':'ws')+'://'+l.host+'/ws';}
+function pick(i){ if(answered) return; answered=true; ws.send(JSON.stringify({type:'team:answer', option:i})); }
+const joinEl=document.getElementById('join'), playEl=document.getElementById('play'), qText=document.getElementById('qText'), qImage=document.getElementById('qImage'), status=document.getElementById('status');
+</script>

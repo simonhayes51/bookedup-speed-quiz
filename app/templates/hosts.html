@@ -1,0 +1,8 @@
+{% extends "layout.html" %}{% block content %}
+<h3>Hosts</h3>
+<form method='post' action='/admin/hosts/add' class='grid'>
+  <input name='name' placeholder='Name' required><input name='email' type='email' placeholder='Email' required><input name='password' type='password' placeholder='Password' required>
+  <div><button class='btn' type='submit'>Add Host</button></div>
+</form><hr>
+<ul class='list'>{% for h in hosts %}<li><span>{{ h.name }} ({{ h.email }})</span><span>ID {{ h.id }}</span></li>{% endfor %}</ul>
+{% endblock %}
