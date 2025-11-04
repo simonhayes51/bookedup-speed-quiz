@@ -1,33 +1,21 @@
 # app/main.py
 from __future__ import annotations
-import os, time, json
+import os, time, json, traceback, logging
 from typing import Optional
 from contextlib import contextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Form, UploadFile, File
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from passlib.hash import bcrypt
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-# ------------------ DB selection: Postgres if DATABASE_URL else SQLite ------------------
-USE_PG = bool(os.getenv("DATABASE_URL"))
-
-if USE_PG:
-    from .db_pg import init_db, get_conn
-else:
-    from .db import init_db as init_sqlite
-    _sqlite_conn = init_sqlite()
-    @contextmanager
-    def get_conn():
-        yield _sqlite_conn
-    def init_db():
-        return True
-
 from .room_manager import RoomManager, Team, Answer
 
-# ------------------ App setup ------------------
+log = logging.getLogger("bookedup")
+
+# ------------------ App & assets ------------------
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key=os.environ.get("SECRET_KEY", "dev-secret-change"))
 
@@ -37,9 +25,47 @@ templates_dir = os.path.join(BASE, "templates")
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 env = Environment(loader=FileSystemLoader(templates_dir), autoescape=select_autoescape())
 
-# create schema (works for PG via db_pg.init_db, no-op for SQLite shim)
-if USE_PG:
-    init_db()
+# ------------------ DB boot: prefer PG, fallback to SQLite ------------------
+USE_PG = False
+get_conn = None
+
+def _boot_db():
+    """
+    Try Postgres if DATABASE_URL is set AND usable; else fall back to SQLite.
+    This prevents 502s due to startup crashes.
+    """
+    global USE_PG, get_conn
+    from importlib import import_module
+
+    db_url = os.getenv("DATABASE_URL")
+    if db_url:
+        try:
+            log.warning("[DB] Attempting Postgres via psycopg_pool")
+            db_pg = import_module("app.db_pg")
+            db_pg.init_db()
+            from app.db_pg import get_conn as _pg_get_conn
+            get_conn = _pg_get_conn
+            USE_PG = True
+            log.warning("[DB] Using Postgres")
+            return
+        except Exception as e:
+            log.error("[DB] Postgres init failed; falling back to SQLite")
+            log.error("Reason: %s", e)
+            log.debug("Traceback:\n%s", traceback.format_exc())
+
+    # Fallback to SQLite
+    log.warning("[DB] Using SQLite fallback")
+    db_sqlite = import_module("app.db")
+    _sqlite_conn = db_sqlite.init_db()
+
+    @contextmanager
+    def _sqlite_get_conn():
+        yield _sqlite_conn
+
+    get_conn = _sqlite_get_conn
+    USE_PG = False
+
+_boot_db()
 
 manager = RoomManager()
 
@@ -54,18 +80,29 @@ def require_role(request: Request, role: Optional[str] = None):
         return None
     return user
 
-# ------------------ Optional: quick route inspector ------------------
+# ------------------ Health & routes inspector ------------------
+@app.get("/healthz", response_class=PlainTextResponse)
+def healthz():
+    # touch DB quickly
+    try:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT 1")
+            cur.fetchone()
+        return "ok"
+    except Exception as e:
+        return PlainTextResponse(f"db-fail: {e}", status_code=500)
+
 @app.get("/__routes")
 def list_routes():
     return [{"path": r.path, "name": getattr(r, "name", None), "methods": list(getattr(r, "methods", []))}
             for r in app.routes]
 
-# ------------------ Admin auto-seed via env (Option A) ------------------
+# ------------------ Admin auto-seed via env ------------------
 def ensure_admin_from_env():
     with get_conn() as conn:
         cur = conn.cursor()
-        sql_exists = "SELECT 1 FROM users WHERE role='admin' LIMIT 1"
-        cur.execute(sql_exists)
+        cur.execute("SELECT 1 FROM users WHERE role='admin' LIMIT 1")
         exists = cur.fetchone()
         if exists:
             return
@@ -73,23 +110,31 @@ def ensure_admin_from_env():
         password = os.getenv("ADMIN_PASSWORD")
         name = os.getenv("ADMIN_NAME", "Admin")
         if email and password:
-            sql_ins = ("INSERT INTO users(name,email,password_hash,role) VALUES(%s,%s,%s,%s)"
-                       if USE_PG else
-                       "INSERT INTO users(name,email,password_hash,role) VALUES(?,?,?,?)")
-            cur.execute(sql_ins, (name, email, bcrypt.hash(password), "admin"))
+            sql = "INSERT INTO users(name,email,password_hash,role) VALUES(%s,%s,%s,%s)" if USE_PG \
+                  else "INSERT INTO users(name,email,password_hash,role) VALUES(?,?,?,?)"
+            cur.execute(sql, (name, email, bcrypt.hash(password), "admin"))
             conn.commit()
-            print(f"[INIT] Admin created: {email}")
+            log.warning("[INIT] Admin created: %s", email)
 
 # ------------------ Startup: load quizzes + seed admin ------------------
 @app.on_event("startup")
 def startup_load():
-    with get_conn() as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT id, title, data_json FROM quizzes")
-        rows = cur.fetchall()
-    wrapped = [{"id": r[0], "title": r[1], "data_json": r[2]} for r in rows]
-    manager.load_quizzes(wrapped)
-    ensure_admin_from_env()
+    try:
+        with get_conn() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id, title, data_json FROM quizzes")
+            rows = cur.fetchall()
+        wrapped = [{"id": r[0], "title": r[1], "data_json": r[2]} for r in rows]
+        manager.load_quizzes(wrapped)
+    except Exception as e:
+        log.error("[Startup] Failed to load quizzes: %s", e)
+        log.debug("Traceback:\n%s", traceback.format_exc())
+
+    try:
+        ensure_admin_from_env()
+    except Exception as e:
+        log.error("[Startup] ensure_admin_from_env failed: %s", e)
+        log.debug("Traceback:\n%s", traceback.format_exc())
 
 # ------------------ Pages ------------------
 @app.get("/")
@@ -314,8 +359,7 @@ def hosts_add(request: Request, name: str = Form(...), email: str = Form(...), p
         return RedirectResponse("/admin/login", status_code=302)
     with get_conn() as conn:
         cur = conn.cursor()
-        sql = "INSERT INTO users(name,email,password_hash,role) VALUES({},{},{},{})".format(
-            "%s","%s","%s","%s") if USE_PG else "INSERT INTO users(name,email,password_hash,role) VALUES(?,?,?,?)"
+        sql = "INSERT INTO users(name,email,password_hash,role) VALUES(%s,%s,%s,%s)" if USE_PG else "INSERT INTO users(name,email,password_hash,role) VALUES(?,?,?,?)"
         cur.execute(sql, (name, email, bcrypt.hash(password), "host"))
         conn.commit()
     return RedirectResponse("/admin/hosts", status_code=302)
@@ -362,7 +406,6 @@ def venues_assign(request: Request, host_id: int = Form(...), venue_id: int = Fo
         conn.commit()
     return RedirectResponse("/admin/venues", status_code=302)
 
-# ---- Quizzes list + builder ----
 @app.get("/admin/quizzes")
 def quizzes_page(request: Request):
     user = require_role(request, "admin")
@@ -433,7 +476,7 @@ def upload_image(request: Request, file: UploadFile = File(...)):
         f.write(file.file.read())
     return JSONResponse({"url": f"/static/images/{file.filename}"})
 
-# ------------------ (Option B) One-time bootstrap endpoint ------------------
+# ------------------ One-time bootstrap (Option B) ------------------
 @app.post("/admin/bootstrap")
 def admin_bootstrap(token: str = Form(None), email: str = Form(None), password: str = Form(None), name: str = Form("Admin")):
     with get_conn() as conn:
