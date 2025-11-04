@@ -6,13 +6,13 @@ from psycopg_pool import ConnectionPool
 pool = None  # created in init_db()
 
 def init_db():
+    """Create pool and ensure schema; requires DATABASE_URL to be set."""
     global pool
     DATABASE_URL = os.environ.get("DATABASE_URL")
     if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL not set. Add Railway Postgres or let main.py fall back to SQLite.")
+        raise RuntimeError("DATABASE_URL not set. Add Railway Postgres or fall back to SQLite.")
     if pool is None:
         pool = ConnectionPool(conninfo=DATABASE_URL, min_size=1, max_size=10, timeout=30)
-    # ensure schema
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
