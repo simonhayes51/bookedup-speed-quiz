@@ -3,15 +3,16 @@ import os
 from contextlib import contextmanager
 from psycopg_pool import ConnectionPool
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
-if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL not set. Add Railway Postgres and redeploy.")
-
-# Small pool is fine for this app; tune if you scale
-pool = ConnectionPool(conninfo=DATABASE_URL, min_size=1, max_size=10, timeout=30)
+pool = None  # created in init_db()
 
 def init_db():
-    """Ensure schema exists."""
+    global pool
+    DATABASE_URL = os.environ.get("DATABASE_URL")
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL not set. Add Railway Postgres or let main.py fall back to SQLite.")
+    if pool is None:
+        pool = ConnectionPool(conninfo=DATABASE_URL, min_size=1, max_size=10, timeout=30)
+    # ensure schema
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -43,6 +44,7 @@ def init_db():
 
 @contextmanager
 def get_conn():
-    """Yield a pooled connection."""
+    if pool is None:
+        raise RuntimeError("Postgres pool not initialised. Call init_db() first.")
     with pool.connection() as conn:
         yield conn
