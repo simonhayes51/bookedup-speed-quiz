@@ -3,10 +3,16 @@ name = "bookedup-speed-quiz"
 startCommand = "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
 
 [variables]
+# REQUIRED
 SECRET_KEY = "change-me"
-# Option A seeding (remove after first login):
+
+# OPTIONAL if you add a Railway Postgres plugin (then DATABASE_URL will be set automatically)
+# DATABASE_URL = "postgresql://..."
+
+# OPTIONAL (Option A: remove after first login)
 # ADMIN_EMAIL = "you@domain.com"
 # ADMIN_PASSWORD = "SuperSecure123!"
 # ADMIN_NAME = "Your Name"
-# Option B bootstrap (remove after bootstrapping):
+
+# OPTIONAL (Option B: remove after bootstrapping)
 # BOOTSTRAP_TOKEN = "generate-a-strong-token"
