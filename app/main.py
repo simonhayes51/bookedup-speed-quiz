@@ -8,7 +8,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Form, Uplo
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, Response, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
-from passlib.hash import bcrypt
+from passlib.hash import bcrypt_sha256 as hasher
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from .room_manager import RoomManager, Team, Answer
@@ -112,7 +112,7 @@ def ensure_admin_from_env():
         if email and password:
             sql = "INSERT INTO users(name,email,password_hash,role) VALUES(%s,%s,%s,%s)" if USE_PG \
                   else "INSERT INTO users(name,email,password_hash,role) VALUES(?,?,?,?)"
-            cur.execute(sql, (name, email, bcrypt.hash(password), "admin"))
+            cur.execute(sql, (name, email, hasher.hash(password), "admin"))
             conn.commit()
             log.warning("[INIT] Admin created: %s", email)
 
@@ -328,7 +328,7 @@ def do_login(request: Request, email: str = Form(...), password: str = Form(...)
         sql = f"SELECT id, email, name, password_hash, role FROM users WHERE email = {'%s' if USE_PG else '?'}"
         cur.execute(sql, (email,))
         row = cur.fetchone()
-    if (not row) or (not bcrypt.verify(password, row[3])):
+    if (not row) or (not hasher.verify(password, row[3])):
         return HTMLResponse(env.get_template("login.html").render(next=next, error="Invalid credentials"), status_code=401)
     request.session["user"] = {"id":row[0],"email":row[1],"name":row[2],"role":row[4]}
     return RedirectResponse(next, status_code=302)
@@ -360,7 +360,7 @@ def hosts_add(request: Request, name: str = Form(...), email: str = Form(...), p
     with get_conn() as conn:
         cur = conn.cursor()
         sql = "INSERT INTO users(name,email,password_hash,role) VALUES(%s,%s,%s,%s)" if USE_PG else "INSERT INTO users(name,email,password_hash,role) VALUES(?,?,?,?)"
-        cur.execute(sql, (name, email, bcrypt.hash(password), "host"))
+        cur.execute(sql, (name, email, hasher.hash(password), "host"))
         conn.commit()
     return RedirectResponse("/admin/hosts", status_code=302)
 
@@ -491,6 +491,6 @@ def admin_bootstrap(token: str = Form(None), email: str = Form(None), password: 
         if not email or not password:
             return JSONResponse({"error":"email & password required"}, status_code=400)
         sql = "INSERT INTO users(name,email,password_hash,role) VALUES(%s,%s,%s,%s)" if USE_PG else "INSERT INTO users(name,email,password_hash,role) VALUES(?,?,?,?)"
-        cur.execute(sql, (name, email, bcrypt.hash(password), "admin"))
+        cur.execute(sql, (name, email, hasher.hash(password), "admin"))
         conn.commit()
     return {"status":"ok"}
