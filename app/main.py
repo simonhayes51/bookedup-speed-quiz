@@ -441,30 +441,52 @@ def quiz_edit(request: Request, qid: int):
         quiz={"id":row[0],"title":payload.get("title", row[1])}, questions=payload.get("questions", [])
     ))
 
+from typing import Optional
+
+def _to_int_or_none(v):
+    try:
+        return int(v) if v not in (None, "", "null") else None
+    except:
+        return None
+
 @app.post("/admin/quizzes/save")
-def quiz_save(request: Request, qid: int = Form(None), title: str = Form(...), questions_json: str = Form(...)):
+def quiz_save(
+    request: Request,
+    qid: Optional[str] = Form(None),                # accept string/empty
+    title: str = Form(...),
+    questions_json: str = Form(...),
+):
     user = require_role(request, "admin")
     if not user:
         return RedirectResponse("/admin/login", status_code=302)
+
     try:
         qlist = json.loads(questions_json)
         data_json = json.dumps({"title": title, "questions": qlist})
     except Exception as e:
         return HTMLResponse(f"Invalid data: {e}", status_code=400)
+
+    qid_i = _to_int_or_none(qid)
+
     with get_conn() as conn:
         cur = conn.cursor()
-        if qid:
-            sql = "UPDATE quizzes SET title=%s, data_json=%s WHERE id=%s" if USE_PG else "UPDATE quizzes SET title=?, data_json=? WHERE id=?"
-            cur.execute(sql, (title, data_json, qid))
+        if qid_i is not None:
+            sql = "UPDATE quizzes SET title=%s, data_json=%s WHERE id=%s" if USE_PG else \
+                  "UPDATE quizzes SET title=?, data_json=? WHERE id=?"
+            cur.execute(sql, (title, data_json, qid_i))
         else:
-            sql = "INSERT INTO quizzes(title, data_json) VALUES(%s,%s)" if USE_PG else "INSERT INTO quizzes(title, data_json) VALUES(?,?)"
+            sql = "INSERT INTO quizzes(title, data_json) VALUES(%s,%s)" if USE_PG else \
+                  "INSERT INTO quizzes(title, data_json) VALUES(?,?)"
             cur.execute(sql, (title, data_json))
         conn.commit()
+
         cur.execute("SELECT id, title, data_json FROM quizzes")
         rows = cur.fetchall()
+
     wrapped = [{"id": r[0], "title": r[1], "data_json": r[2]} for r in rows]
     manager.load_quizzes(wrapped)
     return RedirectResponse("/admin/quizzes", status_code=302)
+
 
 @app.post("/admin/upload_image")
 def upload_image(request: Request, file: UploadFile = File(...)):
