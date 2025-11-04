@@ -1,9 +1,17 @@
-import os, sqlite3
-DB_PATH = os.path.join(os.path.dirname(__file__), "data.db")
+# app/db.py
+import os
+import sqlite3
+
+# If you attach a Railway Volume at /data, set DATA_DIR=/data in Variables.
+DB_DIR = os.environ.get("DATA_DIR", os.path.dirname(__file__))
+DB_PATH = os.path.join(DB_DIR, "data.db")
+
 def connect():
+    # check_same_thread=False because we share the connection in FastAPI
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
+
 def init_db():
     conn = connect()
     cur = conn.cursor()
