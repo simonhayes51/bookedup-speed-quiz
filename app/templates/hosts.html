@@ -1,8 +1,166 @@
-{% extends "layout.html" %}{% block content %}
-<h3>Hosts</h3>
-<form method='post' action='/admin/hosts/add' class='grid'>
-  <input name='name' placeholder='Name' required><input name='email' type='email' placeholder='Email' required><input name='password' type='password' placeholder='Password' required>
-  <div><button class='btn' type='submit'>Add Host</button></div>
-</form><hr>
-<ul class='list'>{% for h in hosts %}<li><span>{{ h.name }} ({{ h.email }})</span><span>ID {{ h.id }}</span></li>{% endfor %}</ul>
+{% extends "layout.html" %}
+{% block content %}
+<section class="card">
+  <h2>Host</h2>
+
+  <div class="grid">
+    <label>Venue (assigned)
+      <select id="venueSelect" disabled><option>Test Venue</option></select>
+    </label>
+
+    <label>Quiz
+      <select id="quizSelect"></select>
+    </label>
+  </div>
+
+  <div class="grid">
+    <label>Question
+      <select id="questionSelect"></select>
+    </label>
+
+    <label>Time (seconds)
+      <input id="timeSecs" type="number" value="20" min="5" step="5"/>
+    </label>
+  </div>
+
+  <button id="startBtn" class="primary">Start ▶</button>
+
+  <div class="row">
+    <div>Room: <code id="roomId">{{ room_id if room_id else "" }}</code></div>
+    <div class="btns">
+      <button id="lockBtn">Lock</button>
+      <button id="revealBtn">Reveal</button>
+      <a id="exportBtn" class="button" href="#">Export CSV</a>
+    </div>
+  </div>
+
+  <div class="grid3">
+    <div class="panel">
+      <h3>Question</h3>
+      <div id="questionText" class="qtext"></div>
+      <ul id="answersProgress" class="progress"></ul>
+      <small><span id="answered">0</span> answered</small>
+    </div>
+    <div class="panel">
+      <h3>Teams</h3>
+      <ul id="teamsList"></ul>
+    </div>
+    <div class="panel">
+      <h3>Leaderboard</h3>
+      <ol id="leaderboard"></ol>
+    </div>
+  </div>
+</section>
+
+<script>
+let ws, queue = [];
+let currentRoom = '';
+let quizzes = [];
+let currentQuiz = null;
+
+function wsUrl(){ const p = location.protocol === 'https:' ? 'wss' : 'ws'; return `${p}://${location.host}/ws`; }
+function sendJSON(o){ if(ws && ws.readyState === WebSocket.OPEN){ ws.send(JSON.stringify(o)); } else { queue.push(o); } }
+function flush(){ while(queue.length && ws && ws.readyState === WebSocket.OPEN){ ws.send(JSON.stringify(queue.shift())); } }
+
+async function loadQuizzes(){
+  const res = await fetch('/api/quizzes');
+  quizzes = await res.json();
+  const sel = document.getElementById('quizSelect');
+  sel.innerHTML = '';
+  quizzes.forEach(q => {
+    const opt = document.createElement('option');
+    opt.value = q.id; opt.textContent = `${q.title} (${q.count})`;
+    sel.appendChild(opt);
+  });
+  updateQuestionSelect(); // fill from first quiz after host sets it
+}
+
+function updateQuestionSelect() {
+  const sel = document.getElementById('questionSelect');
+  sel.innerHTML = '';
+  if(!currentQuiz || !currentQuiz.questions) return;
+  currentQuiz.questions.forEach((q, i) => {
+    const opt = document.createElement('option');
+    opt.value = i; opt.textContent = q.text.slice(0, 60);
+    sel.appendChild(opt);
+  });
+}
+
+function connectWS(roomId){
+  if(ws && (ws.readyState===WebSocket.OPEN || ws.readyState===WebSocket.CONNECTING)) return;
+  ws = new WebSocket(wsUrl());
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ role:'host', roomId }));
+    flush();
+  };
+
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data || '{}');
+    if(m.type === 'room:init'){ /* ok */ }
+    if(m.type === 'teams:update'){
+      const ul = document.getElementById('teamsList'); ul.innerHTML='';
+      m.teams.forEach(t => {
+        const li = document.createElement('li'); li.textContent = `${t.name} — ${t.score}`;
+        ul.appendChild(li);
+      });
+    }
+    if(m.type === 'answers:progress'){
+      document.getElementById('answered').textContent = `${m.answered}`;
+      const ul = document.getElementById('answersProgress');
+      ul.innerHTML='';
+      ['A','B','C','D'].forEach((lbl, i)=>{
+        const li = document.createElement('li');
+        li.textContent = `${lbl} — ${m.counts[i]||0}`;
+        ul.appendChild(li);
+      });
+    }
+    if(m.type === 'results:summary'){
+      const ol = document.getElementById('leaderboard'); ol.innerHTML='';
+      m.leaderboard.forEach(e=>{
+        const li = document.createElement('li'); li.textContent = `${e.name} — ${e.score}`;
+        ol.appendChild(li);
+      });
+    }
+    if(m.type === 'quiz:set'){
+      // fetch quiz detail list for host UI (already in memory on server)
+      currentQuiz = window._quizCache && window._quizCache[m.quizId] || currentQuiz;
+    }
+    if(m.type === 'question:prompt'){
+      document.getElementById('questionText').textContent = m.text || '';
+    }
+  };
+
+  ws.onclose = () => setTimeout(()=>connectWS(roomId), 1000);
+  ws.onerror = () => { try{ ws.close(); }catch(e){} };
+}
+
+function startFlow(){
+  const secs = Number(document.getElementById('timeSecs').value || 20);
+  const quizId = Number(document.getElementById('quizSelect').value);
+  sendJSON({ type:'host:set_quiz', quizId });
+  sendJSON({ type:'host:start_question', timeLimitMs: secs*1000, index: Number(document.getElementById('questionSelect').value || 0) });
+}
+
+function setExport(roomId){
+  document.getElementById('exportBtn').href = `/api/export/${roomId}`;
+}
+
+(async function init(){
+  await loadQuizzes();
+  // the server created a room for you; it’s printed in template via admin UI
+  currentRoom = (document.getElementById('roomId').textContent || '').trim();
+  if(!currentRoom){ currentRoom = prompt('Enter room code from /host gate'); document.getElementById('roomId').textContent = currentRoom; }
+  connectWS(currentRoom);
+  setExport(currentRoom);
+})();
+
+document.getElementById('startBtn').addEventListener('click', startFlow);
+document.getElementById('lockBtn').addEventListener('click', () => sendJSON({ type:'host:lock' }));
+document.getElementById('revealBtn').addEventListener('click', () => sendJSON({ type:'host:reveal' }));
+document.getElementById('quizSelect').addEventListener('change', (e)=>{
+  // just keep local pointer for question dropdown (optional)
+  // you can preload a cache via a tiny endpoint if you want question text here
+});
+</script>
 {% endblock %}
