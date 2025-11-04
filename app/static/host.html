@@ -1,67 +1,166 @@
-<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
-<link rel='stylesheet' href='/static/style.css'><title>Host</title>
-<div class='wrap'>
+{% extends "layout.html" %}
+{% block content %}
+<section class="card">
   <h2>Host</h2>
-  <div class='card'>
-    <div class='grid'>
-      <label>Venue (assigned)</label><select id='venueSelect'></select>
-      <label>Quiz</label><select id='quizSelect'></select>
-      <label>Time (seconds)</label><input id='timeInput' value='20' type='number' min='5'>
-      <button class='btn' onclick='startQuestion()'>Start ▶</button>
+
+  <div class="grid">
+    <label>Venue (assigned)
+      <select id="venueSelect" disabled><option>Test Venue</option></select>
+    </label>
+
+    <label>Quiz
+      <select id="quizSelect"></select>
+    </label>
+  </div>
+
+  <div class="grid">
+    <label>Question
+      <select id="questionSelect"></select>
+    </label>
+
+    <label>Time (seconds)
+      <input id="timeSecs" type="number" value="20" min="5" step="5"/>
+    </label>
+  </div>
+
+  <button id="startBtn" class="primary">Start ▶</button>
+
+  <div class="row">
+    <div>Room: <code id="roomId">{{ room_id if room_id else "" }}</code></div>
+    <div class="btns">
+      <button id="lockBtn">Lock</button>
+      <button id="revealBtn">Reveal</button>
+      <a id="exportBtn" class="button" href="#">Export CSV</a>
     </div>
   </div>
-  <div class='card flex' style='justify-content:space-between'>
-    <div>Room: <span class='badge' id='roomCode'>—</span></div>
-    <div class='flex'><button class='btn' onclick='lockQuestion()'>Lock</button><button class='btn' onclick='reveal()'>Reveal</button><a class='btn' id='exportLink' target='_blank'>Export CSV</a></div>
-  </div>
-  <div class='grid'>
-    <div class='card'>
+
+  <div class="grid3">
+    <div class="panel">
       <h3>Question</h3>
-      <div id='qText'></div>
-      <img id='qImage' style='max-width:100%;display:none'>
-      <div class='progress'><div class='bar' id='barA' style='width:0%'></div></div>
-      <div class='progress'><div class='bar' id='barB' style='width:0%'></div></div>
-      <div class='progress'><div class='bar' id='barC' style='width:0%'></div></div>
-      <div class='progress'><div class='bar' id='barD' style='width:0%'></div></div>
-      <div class='small'><span id='answeredCount'>0</span> answered</div>
+      <div id="questionText" class="qtext"></div>
+      <ul id="answersProgress" class="progress"></ul>
+      <small><span id="answered">0</span> answered</small>
     </div>
-    <div class='card'>
+    <div class="panel">
       <h3>Teams</h3>
-      <ul class='list' id='teamsList'></ul>
+      <ul id="teamsList"></ul>
     </div>
-    <div class='card'>
+    <div class="panel">
       <h3>Leaderboard</h3>
-      <ul class='list' id='leaderboard'></ul>
+      <ol id="leaderboard"></ol>
     </div>
   </div>
-</div>
+</section>
+
 <script>
-let ws=null, roomId=null;
-async function init(){
-  const me = await (await fetch('/api/me')).json(); if(!me||!me.id){location.href='/admin/login?next=/host';return;}
-  const vres=await fetch('/api/my_venues'); const venues=await vres.json();
-  const vsel=document.getElementById('venueSelect'); venues.forEach(v=>{const o=document.createElement('option'); o.value=v.id; o.textContent=v.name; vsel.appendChild(o);});
-  const qres=await fetch('/api/quizzes'); const quizzes=await qres.json();
-  const qsel=document.getElementById('quizSelect'); quizzes.forEach(q=>{const o=document.createElement('option'); o.value=q.id; o.textContent=q.title; qsel.appendChild(o);});
-  // create room
-  const fd=new FormData(); fd.append('venue_id', vsel.value||venues[0].id); fd.append('venue_title', venues[0].name); fd.append('venue_logo', venues[0].logo_url||'');
-  const cres=await fetch('/api/create_room', {method:'POST', body:fd}); const cd=await cres.json(); roomId=cd.roomId;
-  document.getElementById('roomCode').innerText=roomId; document.getElementById('exportLink').href='/api/export/'+roomId;
-  ws = new WebSocket(getWs()); ws.onopen=()=>{ws.send(JSON.stringify({role:'host', roomId})); setQuiz();};
-  ws.onmessage=(ev)=>{const m=JSON.parse(ev.data);
-    if(m.type==='teams:update') renderTeams(m.teams);
-    if(m.type==='question:prompt'){document.getElementById('qText').innerText=m.text; if(m.imageUrl){qImage.src=m.imageUrl;qImage.style.display='block';}else qImage.style.display='none'; setBars(0,0,0,0); document.getElementById('answeredCount').innerText='0';}
-    if(m.type==='answers:progress'){const tot=Math.max(1,m.teamsTotal); setBars(m.counts[0]/tot*100,m.counts[1]/tot*100,m.counts[2]/tot*100,m.counts[3]/tot*100); document.getElementById('answeredCount').innerText=m.answered;}
-    if(m.type==='results:summary'){renderBoard(m.leaderboard);}
-  };
+let ws, queue = [];
+let currentRoom = '';
+let quizzes = [];
+let currentQuiz = null;
+
+function wsUrl(){ const p = location.protocol === 'https:' ? 'wss' : 'ws'; return `${p}://${location.host}/ws`; }
+function sendJSON(o){ if(ws && ws.readyState === WebSocket.OPEN){ ws.send(JSON.stringify(o)); } else { queue.push(o); } }
+function flush(){ while(queue.length && ws && ws.readyState === WebSocket.OPEN){ ws.send(JSON.stringify(queue.shift())); } }
+
+async function loadQuizzes(){
+  const res = await fetch('/api/quizzes');
+  quizzes = await res.json();
+  const sel = document.getElementById('quizSelect');
+  sel.innerHTML = '';
+  quizzes.forEach(q => {
+    const opt = document.createElement('option');
+    opt.value = q.id; opt.textContent = `${q.title} (${q.count})`;
+    sel.appendChild(opt);
+  });
+  updateQuestionSelect(); // fill from first quiz after host sets it
 }
-function getWs(){const l=location;return (l.protocol==='https:'?'wss':'ws')+'://'+l.host+'/ws';}
-function setQuiz(){const quizId=document.getElementById('quizSelect').value; ws.send(JSON.stringify({type:'host:set_quiz', quizId}));}
-function startQuestion(){const s=parseInt(document.getElementById('timeInput').value||'20',10); ws.send(JSON.stringify({type:'host:start_question', timeLimitMs:s*1000}));}
-function lockQuestion(){ws.send(JSON.stringify({type:'host:lock'}));}
-function reveal(){ws.send(JSON.stringify({type:'host:reveal'}));}
-function renderTeams(ts){const ul=document.getElementById('teamsList'); ul.innerHTML=''; ts.forEach(t=>{const li=document.createElement('li'); li.innerHTML='<span>'+t.name+'</span><span>'+t.score+'</span>'; ul.appendChild(li);});}
-function renderBoard(ls){const ul=document.getElementById('leaderboard'); ul.innerHTML=''; ls.forEach((t,i)=>{const li=document.createElement('li'); li.innerHTML='<span>'+(i+1)+'. '+t.name+'</span><span>'+t.score+'</span>'; ul.appendChild(li);});}
-function setBars(a,b,c,d){document.getElementById('barA').style.width=a+'%';document.getElementById('barB').style.width=b+'%';document.getElementById('barC').style.width=c+'%';document.getElementById('barD').style.width=d+'%';}
-window.addEventListener('load', init);
+
+function updateQuestionSelect() {
+  const sel = document.getElementById('questionSelect');
+  sel.innerHTML = '';
+  if(!currentQuiz || !currentQuiz.questions) return;
+  currentQuiz.questions.forEach((q, i) => {
+    const opt = document.createElement('option');
+    opt.value = i; opt.textContent = q.text.slice(0, 60);
+    sel.appendChild(opt);
+  });
+}
+
+function connectWS(roomId){
+  if(ws && (ws.readyState===WebSocket.OPEN || ws.readyState===WebSocket.CONNECTING)) return;
+  ws = new WebSocket(wsUrl());
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ role:'host', roomId }));
+    flush();
+  };
+
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data || '{}');
+    if(m.type === 'room:init'){ /* ok */ }
+    if(m.type === 'teams:update'){
+      const ul = document.getElementById('teamsList'); ul.innerHTML='';
+      m.teams.forEach(t => {
+        const li = document.createElement('li'); li.textContent = `${t.name} — ${t.score}`;
+        ul.appendChild(li);
+      });
+    }
+    if(m.type === 'answers:progress'){
+      document.getElementById('answered').textContent = `${m.answered}`;
+      const ul = document.getElementById('answersProgress');
+      ul.innerHTML='';
+      ['A','B','C','D'].forEach((lbl, i)=>{
+        const li = document.createElement('li');
+        li.textContent = `${lbl} — ${m.counts[i]||0}`;
+        ul.appendChild(li);
+      });
+    }
+    if(m.type === 'results:summary'){
+      const ol = document.getElementById('leaderboard'); ol.innerHTML='';
+      m.leaderboard.forEach(e=>{
+        const li = document.createElement('li'); li.textContent = `${e.name} — ${e.score}`;
+        ol.appendChild(li);
+      });
+    }
+    if(m.type === 'quiz:set'){
+      // fetch quiz detail list for host UI (already in memory on server)
+      currentQuiz = window._quizCache && window._quizCache[m.quizId] || currentQuiz;
+    }
+    if(m.type === 'question:prompt'){
+      document.getElementById('questionText').textContent = m.text || '';
+    }
+  };
+
+  ws.onclose = () => setTimeout(()=>connectWS(roomId), 1000);
+  ws.onerror = () => { try{ ws.close(); }catch(e){} };
+}
+
+function startFlow(){
+  const secs = Number(document.getElementById('timeSecs').value || 20);
+  const quizId = Number(document.getElementById('quizSelect').value);
+  sendJSON({ type:'host:set_quiz', quizId });
+  sendJSON({ type:'host:start_question', timeLimitMs: secs*1000, index: Number(document.getElementById('questionSelect').value || 0) });
+}
+
+function setExport(roomId){
+  document.getElementById('exportBtn').href = `/api/export/${roomId}`;
+}
+
+(async function init(){
+  await loadQuizzes();
+  // the server created a room for you; it’s printed in template via admin UI
+  currentRoom = (document.getElementById('roomId').textContent || '').trim();
+  if(!currentRoom){ currentRoom = prompt('Enter room code from /host gate'); document.getElementById('roomId').textContent = currentRoom; }
+  connectWS(currentRoom);
+  setExport(currentRoom);
+})();
+
+document.getElementById('startBtn').addEventListener('click', startFlow);
+document.getElementById('lockBtn').addEventListener('click', () => sendJSON({ type:'host:lock' }));
+document.getElementById('revealBtn').addEventListener('click', () => sendJSON({ type:'host:reveal' }));
+document.getElementById('quizSelect').addEventListener('change', (e)=>{
+  // just keep local pointer for question dropdown (optional)
+  // you can preload a cache via a tiny endpoint if you want question text here
+});
 </script>
+{% endblock %}
