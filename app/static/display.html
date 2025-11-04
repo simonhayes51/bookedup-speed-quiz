@@ -1,30 +1,79 @@
-<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
-<link rel='stylesheet' href='/static/style.css'><title>Projector</title>
-<div class='wrap'>
+{% extends "layout.html" %}
+{% block content %}
+<section class="card">
   <h2>Projector</h2>
-  <div class='card'><input id='room' placeholder='Room code'><button class='btn' onclick='connect()'>Connect</button></div>
-  <div class='card'><div id='qText'></div><img id='qImage' style='max-width:100%;display:none'></div>
-  <div class='grid'>
-    <div class='card'><div class='progress'><div class='bar' id='a' style='width:0%'></div></div><div class='small'>A</div></div>
-    <div class='card'><div class='progress'><div class='bar' id='b' style='width:0%'></div></div><div class='small'>B</div></div>
-    <div class='card'><div class='progress'><div class='bar' id='c' style='width:0%'></div></div><div class='small'>C</div></div>
-    <div class='card'><div class='progress'><div class='bar' id='d' style='width:0%'></div></div><div class='small'>D</div></div>
+  <div class="row">
+    <input id="roomInput" placeholder="Room code"/>
+    <button id="connectBtn" class="primary">Connect</button>
   </div>
-  <div class='card'><h3>Leaderboard</h3><ul class='list' id='board'></ul></div>
-</div>
+
+  <div id="branding" class="brand">
+    <img id="venueLogo" style="max-height:64px; display:none"/>
+    <h3 id="venueTitle"></h3>
+  </div>
+
+  <div class="question">
+    <h3 id="qText"></h3>
+    <div id="imgWrap"></div>
+  </div>
+
+  <div class="bars">
+    <div class="bar"><span>A</span><progress id="barA" max="100"></progress></div>
+    <div class="bar"><span>B</span><progress id="barB" max="100"></progress></div>
+    <div class="bar"><span>C</span><progress id="barC" max="100"></progress></div>
+    <div class="bar"><span>D</span><progress id="barD" max="100"></progress></div>
+  </div>
+
+  <h3>Leaderboard</h3>
+  <ol id="leaderboard"></ol>
+</section>
+
 <script>
-let ws=null, roomId=null;
-function connect(){
-  roomId=document.getElementById('room').value.trim().toUpperCase();
-  ws=new WebSocket(getWs()); ws.onopen=()=>{ws.send(JSON.stringify({role:'display', roomId}))};
-  ws.onmessage=(ev)=>{const m=JSON.parse(ev.data);
-    if(m.type==='question:prompt'){qText.innerText=m.text; if(m.imageUrl){qImage.src=m.imageUrl;qImage.style.display='block';} else qImage.style.display='none'; setBars(0,0,0,0);}
-    if(m.type==='answers:progress'){const t=Math.max(1,m.teamsTotal); setBars(m.counts[0]/t*100,m.counts[1]/t*100,m.counts[2]/t*100,m.counts[3]/t*100);}
-    if(m.type==='results:summary'){renderBoard(m.leaderboard);}
+let ws, queue = [];
+function wsUrl(){ const p = location.protocol==='https:'?'wss':'ws'; return `${p}://${location.host}/ws`; }
+function sendJSON(o){ if(ws && ws.readyState===WebSocket.OPEN){ ws.send(JSON.stringify(o)); } else { queue.push(o); } }
+function flush(){ while(queue.length && ws.readyState===WebSocket.OPEN){ ws.send(JSON.stringify(queue.shift())); } }
+
+function connectDisplay(roomId){
+  if(ws && (ws.readyState===WebSocket.OPEN || ws.readyState===WebSocket.CONNECTING)) return;
+  ws = new WebSocket(wsUrl());
+  ws.onopen = () => { ws.send(JSON.stringify({ role:'display', roomId })); flush(); };
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data||'{}');
+    if(m.type==='branding'){
+      document.getElementById('venueTitle').textContent = m.venueTitle || '';
+      const logo = document.getElementById('venueLogo');
+      if(m.venueLogo){ logo.src = m.venueLogo; logo.style.display='inline-block'; }
+    }
+    if(m.type==='question:prompt'){
+      document.getElementById('qText').textContent = m.text || '';
+      document.getElementById('barA').value=0;
+      document.getElementById('barB').value=0;
+      document.getElementById('barC').value=0;
+      document.getElementById('barD').value=0;
+      const wrap = document.getElementById('imgWrap'); wrap.innerHTML='';
+      if(m.imageUrl){ const img = document.createElement('img'); img.src=m.imageUrl; img.style.maxHeight='240px'; wrap.appendChild(img); }
+    }
+    if(m.type==='answers:progress'){
+      const total = Math.max(1, m.teamsTotal||1);
+      const pct = (n)=> Math.round((n||0)/total*100);
+      document.getElementById('barA').value=pct(m.counts[0]);
+      document.getElementById('barB').value=pct(m.counts[1]);
+      document.getElementById('barC').value=pct(m.counts[2]);
+      document.getElementById('barD').value=pct(m.counts[3]);
+    }
+    if(m.type==='results:summary'){
+      const ol = document.getElementById('leaderboard'); ol.innerHTML='';
+      m.leaderboard.forEach(e=>{ const li=document.createElement('li'); li.textContent=`${e.name} — ${e.score}`; ol.appendChild(li); });
+    }
   };
+  ws.onclose = () => setTimeout(()=>connectDisplay(roomId), 1000);
+  ws.onerror = () => { try{ ws.close(); }catch(e){} };
 }
-function getWs(){const l=location; return (l.protocol==='https:'?'wss':'ws')+'://'+l.host+'/ws';}
-function setBars(a,b,c,d){document.getElementById('a').style.width=a+'%';document.getElementById('b').style.width=b+'%';document.getElementById('c').style.width=c+'%';document.getElementById('d').style.width=d+'%';}
-function renderBoard(ls){const ul=document.getElementById('board'); ul.innerHTML=''; ls.forEach((t,i)=>{const li=document.createElement('li'); li.innerHTML='<span>'+(i+1)+'. '+t.name+'</span><span>'+t.score+'</span>'; ul.appendChild(li);});}
-const qText=document.getElementById('qText'), qImage=document.getElementById('qImage');
+
+document.getElementById('connectBtn').addEventListener('click', ()=>{
+  const roomId = document.getElementById('roomInput').value.trim();
+  if(roomId) connectDisplay(roomId);
+});
 </script>
+{% endblock %}
